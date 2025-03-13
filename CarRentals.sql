@@ -225,39 +225,184 @@ DELIMITER ;
 
 SELECT dostepnosc_pojazdu(8989);
 
--- funkcja obliczajaca cene oraz dlugosc wypozyczenia
-DROP function tworzenie_rezerwacji;
+-- funkcja sprawdzajaca czy mozna utworzyc dana rezerwacje
+DROP FUNCTION IF EXISTS mozlwiosc_rezerwacji;
 DELIMITER $$
-CREATE FUNCTION tworzenie_rezerwacji(data_rozp DATE, data_zak DATE, nr_poj INT)
-    RETURNS VARCHAR(200)
+
+CREATE FUNCTION mozlwiosc_rezerwacji(data_rozp DATE, data_zak DATE, nr_poj INT)
+    RETURNS INT
     DETERMINISTIC
 BEGIN
-    DECLARE kwota,ilosc,cena_dzienna int;
-    DECLARE dostepnosc VARCHAR(20);
+    DECLARE ilosc INT;
+    DECLARE cena_dzienna INT;
+    DECLARE rezerwacja_niedostepna INT;
 
-SELECT cena INTO cena_dzienna FROM Pojazdy WHERE nr_poj = nr_rejestracyjny;
-SELECT status INTO dostepnosc FROM Pojazdy WHERE nr_poj = nr_rejestracyjny;
+    SELECT cena INTO cena_dzienna FROM Pojazdy WHERE nr_rejestracyjny = nr_poj;
 
-IF cena_dzienna IS NULL THEN
-        RETURN 'Podany numer rejestracyjny nie znajduje sie w naszej bazie danych';
-END IF;
+    IF cena_dzienna IS NULL THEN
+        RETURN -1; -- Wartość -1 oznacza błąd (np. brak pojazdu w bazie)
+    END IF;
 
-    IF dostepnosc != 'Dostepny' THEN
-        RETURN 'Pojazd w wybranym terminie jest niedostepny';
-end if;
+    -- Sprawdzenie, czy pojazd jest dostępny w wybranym okresie
+    SELECT COUNT(*) INTO rezerwacja_niedostepna
+    FROM Rezerwacje
+    WHERE nr_rejestracyjny = nr_poj
+      AND (
+        (data_rozp BETWEEN data_rozpoczecia AND data_zakonczenia)
+            OR
+        (data_zak BETWEEN data_rozpoczecia AND data_zakonczenia)
+            OR
+        (data_rozp <= data_rozpoczecia AND data_zak >= data_zakonczenia)
+        );
+
+    IF rezerwacja_niedostepna > 0 THEN
+        RETURN -2; -- Wartość -2 oznacza brak dostępności pojazdu
+    END IF;
 
     -- Obliczenie liczby dni
     SET ilosc = DATEDIFF(data_zak, data_rozp) + 1;
 
-    -- Jeśli data_zak jest wcześniejsza niż data_rozp, zwróć 0
     IF ilosc <= 0 THEN
-        RETURN 0;
+        RETURN -3; -- Wartość -3 oznacza błąd dat
+    END IF;
 
-END IF;
-    SET kwota = cena_dzienna*ilosc;
-RETURN kwota;
+    -- Obliczenie całkowitej kwoty
+    RETURN cena_dzienna * ilosc;
 
 END $$
+
 DELIMITER ;
 
-SELECT tworzenie_rezerwacji('2025-03-01','2025-03-01',1134)
+SELECT mozlwiosc_rezerwacji('2024-03-08','2024-03-10',5603);
+
+-- funkcja generujaca rezerwacje oraz platnosc dla danej rezerwacji
+DROP FUNCTION IF EXISTS generuj_rezerwacje;
+
+DELIMITER $$
+
+CREATE FUNCTION generuj_rezerwacje(
+    data_rozp DATE,
+    data_zak DATE,
+    nr_poj INT,
+    id_k INT,
+    metoda_platnosci ENUM('Karta', 'Gotowka', 'Przelew')
+)
+    RETURNS VARCHAR(50)
+    DETERMINISTIC
+BEGIN
+    DECLARE nr_rez INT;
+    DECLARE kwota INT;
+
+    -- Wywołanie funkcji sprawdzającej możliwość rezerwacji
+    SET kwota = mozlwiosc_rezerwacji(data_rozp, data_zak, nr_poj);
+
+    -- Sprawdzamy, czy rezerwacja została pomyślnie utworzona
+    IF kwota > 0 THEN
+        -- Tworzenie nowej rezerwacji
+        INSERT INTO Rezerwacje (id_klienta, nr_rejestracyjny, data_rozpoczecia, data_zakonczenia)
+        VALUES (id_k, nr_poj, data_rozp, data_zak);
+
+        -- Pobranie numeru nowo utworzonej rezerwacji
+        SELECT nr_rezerwacji INTO nr_rez
+        FROM Rezerwacje
+        WHERE nr_rejestracyjny = nr_poj
+          AND id_klienta = id_k
+          AND data_rozpoczecia = data_rozp
+          AND data_zakonczenia = data_zak;
+
+        -- Tworzenie płatności dla tej rezerwacji
+        IF metoda_platnosci = 'Gotowka' THEN
+            INSERT INTO Platnosci (nr_rezerwacji, kwota, data_platnosci, status, metoda)
+            SELECT nr_rez, kwota,data_rozp, 'Oczekujace', metoda_platnosci;
+        ELSE
+            INSERT INTO Platnosci (nr_rezerwacji, kwota, data_platnosci, status, metoda)
+            SELECT nr_rez, kwota,CURDATE(), 'Oczekujace', metoda_platnosci;
+
+        END IF;
+
+        -- Potwierdzenie
+        RETURN 'Rezerwacja oraz płatność została wygenerowana.';
+    ELSE
+        -- Zwracamy odpowiedni status w przypadku błędu
+        IF kwota = -1 THEN
+            RETURN 'Błąd: Pojazd nie istnieje';
+        ELSEIF kwota = -2 THEN
+            RETURN 'Błąd: Pojazd niedostępny w wybranym terminie';
+        ELSEIF kwota = -3 THEN
+            RETURN 'Błąd: Data zakończenia musi być późniejsza niż data rozpoczęcia';
+        END IF;
+    END IF;
+
+END $$
+
+DELIMITER ;
+
+SELECT generuj_rezerwacje('2024-04-01','2024-04-03',5603, 8, 'Karta') AS Utworzenie_rezerwacji;
+
+-- dodanie wiecej rekordow
+
+INSERT INTO Rezerwacje (id_klienta, nr_rejestracyjny, data_rozpoczecia, data_zakonczenia, status) VALUES
+(6, 5004, '2025-03-10', '2025-03-14', 'W trakcie'),
+(7, 4892, '2025-03-10', '2025-03-13', 'W trakcie'),
+(8, 5603, '2025-03-12', '2025-03-18', 'Przed rozpoczeciem'),
+(9, 3023, '2025-03-10', '2025-03-20', 'W trakcie'),
+(10, 1134, '2025-03-11', '2025-03-14', 'W trakcie');
+
+
+INSERT INTO Platnosci (nr_rezerwacji, kwota, data_platnosci, status, metoda) VALUES
+(16, 200.00, '2025-03-10', 'Oczekujace', 'Karta'),
+(17, 250.00, '2025-03-11', 'Oczekujace', 'Gotowka'),
+(18, 300.00, '2025-03-12', 'Oczekujace', 'Przelew'),
+(19, 350.00, '2025-03-10', 'Oczekujace', 'Karta'),
+(20, 400.00, '2025-03-11', 'Oczekujace', 'Gotowka'),
+(21, 450.00, '2025-03-12', 'Oczekujace', 'Przelew');
+
+-- procedura aktualizujaca status rezerwacji oraz automatyzacja jej
+DELIMITER $$
+
+CREATE PROCEDURE aktualizuj_statusy()
+BEGIN
+    UPDATE Rezerwacje
+    SET status = 'zakończona'
+    WHERE data_zakonczenia < CURDATE()
+      AND status = 'W trakcie';
+END $$
+
+DELIMITER ;
+
+CALL aktualizuj_statusy();
+
+CREATE EVENT aktualizuj_statusy_event
+    ON SCHEDULE EVERY 1 DAY
+    DO
+    CALL aktualizuj_statusy();
+
+-- Trigger aktualizujący status pojazdu po zakończeniu rezerwacji
+DELIMITER $$
+
+CREATE TRIGGER aktualizuj_status_pojazdu
+    AFTER UPDATE ON Rezerwacje
+    FOR EACH ROW
+BEGIN
+    IF NEW.status IN ('Zakonczona', 'Anulowana') THEN
+        UPDATE Pojazdy
+        SET status = 'Dostepny'
+        WHERE nr_rejestracyjny = NEW.nr_rejestracyjny;
+    ELSEIF NEW.status = 'W trakcie' THEN
+        UPDATE Pojazdy
+        SET status = 'Wypozyczony'
+        WHERE nr_rejestracyjny = NEW.nr_rejestracyjny;
+    END IF;
+END $$
+
+DELIMITER ;
+
+
+
+
+
+
+
+
+
+
