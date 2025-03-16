@@ -397,6 +397,83 @@ END $$
 
 DELIMITER ;
 
+-- utworzenie indeksu dla szybszej pracy bazy danych (nie bylo to konieczne z uwagi na maly cwiczeniowy rozmiar bazy)
+CREATE UNIQUE INDEX idx_nr_rej ON Pojazdy(nr_rejestracyjny);
+
+
+-- Analiza danych
+
+-- utworzenie procedury obliczajacej dochod w danym zakresie dat
+DROP PROCEDURE IF EXISTS dochod_w_danym_zakresie;
+
+DELIMITER $$
+
+CREATE PROCEDURE dochod_w_danym_zakresie(IN data_poczatkowa DATE, IN data_koncowa DATE)
+BEGIN
+    DECLARE alias_nazwa VARCHAR(255);
+
+    SET alias_nazwa = CONCAT('Dochod_', DATE_FORMAT(data_poczatkowa, '%Y_%m_%d'),
+                             '_do_',
+                             DATE_FORMAT(data_koncowa, '%Y_%m_%d'));
+
+    SELECT alias_nazwa AS zakres_dochodu, SUM(kwota) AS dochod
+    FROM Platnosci
+    WHERE data_platnosci BETWEEN data_poczatkowa AND data_koncowa;
+END $$
+
+DELIMITER ;
+
+CALL dochod_w_danym_zakresie('2025-03-10','2025-03-11');
+
+-- utworzenie widoku ktory generuje tabele miesiecznych dochodow
+
+CREATE OR REPLACE VIEW raport_miesieczny_dochod AS
+SELECT
+    DATE_FORMAT(data_platnosci, '%Y-%m') AS miesiac,
+    SUM(kwota) AS dochod
+FROM Platnosci
+GROUP BY miesiac
+ORDER BY miesiac ;
+
+SELECT * FROM raport_miesieczny_dochod;
+
+-- widok przedtawiajacy najczesciej wypozyczane pojazdy
+
+CREATE OR REPLACE VIEW raport_najczesciej_wypozyczone_pojazdy AS
+SELECT Pojazdy.marka, Pojazdy.model, COUNT(Rezerwacje.nr_rejestracyjny) AS liczba_wypozyczen
+FROM Pojazdy
+         INNER JOIN Rezerwacje ON Pojazdy.nr_rejestracyjny = Rezerwacje.nr_rejestracyjny
+GROUP BY Pojazdy.marka, Pojazdy.model, Pojazdy.nr_rejestracyjny
+ORDER BY liczba_wypozyczen DESC;
+
+SELECT * FROM raport_najczesciej_wypozyczone_pojazdy ;
+
+-- widok przedstawijacy klientow ktorzy dokonali najwiecej rezerwacji
+
+CREATE OR REPLACE VIEW raport_najaktywniejsi_klienci AS
+SELECT Klienci.id_klienta, Klienci.imie, Klienci.nazwisko, COUNT(Rezerwacje.id_klienta) AS liczba_wypozyczen
+FROM Klienci
+    INNER JOIN Rezerwacje  on Klienci.id_klienta = Rezerwacje.id_klienta
+GROUP BY Klienci.id_klienta, Klienci.imie, Klienci.nazwisko, Rezerwacje.id_klienta
+ORDER BY liczba_wypozyczen DESC;
+
+SELECT * FROM raport_najaktywniejsi_klienci;
+
+-- widok przedtawiajacy sredni czas wypozyczenia auta w zaleznosci od jego typu
+
+CREATE OR REPLACE VIEW raport_srednia_dlugosc_wypozyczenia AS
+SELECT Pojazdy.typ, AVG(DATEDIFF(Rezerwacje.data_zakonczenia, Rezerwacje.data_rozpoczecia)) AS srednia_dlugosc_wypozyczenia_w_dniach
+FROM Pojazdy
+    INNER JOIN Rezerwacje ON Pojazdy.nr_rejestracyjny = Rezerwacje.nr_rejestracyjny
+WHERE Rezerwacje.status = 'Zakonczona'
+GROUP BY Pojazdy.typ
+ORDER BY srednia_dlugosc_wypozyczenia_w_dniach DESC ;
+
+SELECT * FROM raport_srednia_dlugosc_wypozyczenia;
+
+
+
+
 
 
 
