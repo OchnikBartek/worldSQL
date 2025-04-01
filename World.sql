@@ -44,7 +44,7 @@ SELECT * FROM gestosc_krajow WHERE Populacja != 0 ORDER BY Gestosc_Zaludnienia L
 SELECT Name FROM country WHERE IndepYear is null;
 
 SELECT Name FROM country WHERE IndepYear IS NOT NULL
-                           AND SurfaceArea = (SELECT MAX(SurfaceArea) FROM country WHERE IndepYear IS NOT NULL );
+AND SurfaceArea = (SELECT MAX(SurfaceArea) FROM country WHERE IndepYear IS NOT NULL );
 
 SELECT Name FROM country WHERE Continent = 'Asia' AND IndepYear < 0 ORDER BY Population DESC ;
 
